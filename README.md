@@ -2,7 +2,7 @@
 
 This repository accompanies the manuscript  
 "How climate change and deforestation interact in the transformation of the Amazon rainforest"
-(Franco et al., submitted to *Nature Communications).
+(Franco et al., submitted to Nature Communications).
 
 It contains:
 - Scripts for downloading data from Google Earth Engine (GEE)
