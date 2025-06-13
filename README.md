@@ -39,7 +39,8 @@ Due to file size, raw data is stored as a .zip file.
   - Forest cover (MapBiomas)
   - ERA5 reanalysis (temperature, precipitation)
   - GPM precipitation
-- Processed data files are provided as `.zip` in the `data/` folder.
+
+**- All raw and processed data files are provided as `.zip` in the `data/` folder.**
 
 **Process and analyze data**
    - Open the Python scripts or run them in a Jupyter Notebook.
