@@ -14,6 +14,7 @@ Note: The order of the downloaded areas in the script is not the same as in the 
 
 - `gee_extraction.js`: Extracts forest cover (MapBiomas), ERA5 daily temperature, and GPM monthly precipitation.
 - `geometries.js`: Defines 29 rectangular study areas in the Brazilian Amazon used for all analyses.
+- `download_forestcover.js` code used to download forest cover for the paper analysis
 
 ## Datasets Accessed
 
