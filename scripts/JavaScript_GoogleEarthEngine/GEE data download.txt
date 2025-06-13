@@ -1,0 +1,209 @@
+// ==============================================================================
+// Script Title: Climate and Land Cover Time Series Extraction for Amazon Regions
+// Author: Marco A. Franco
+// Contact: marco.franco@usp.br
+// Associated Manuscript: Nature Communications (2025)
+// 
+// Description:
+// This script extracts spatial and temporal statistics of key climate variables 
+// and land cover metrics across a predefined region in the Brazilian Amazon. 
+// Specifically, it generates:
+//  - Forest and non-forest area estimates based on MapBiomas classification
+//  - Daily maximum air temperature from ERA5 reanalysis (one year sample)
+//  - Monthly accumulated precipitation from GPM (2000–2020)
+// 
+// Outputs include CSV tables suitable for statistical analysis and figure generation.
+// ==============================================================================
+
+
+// ==========================================
+// 1. DEFINE STUDY REGION AND TIME PARAMETERS
+// ==========================================
+
+var geometry = ee.Geometry.Polygon([
+  [[-57.40625, -3.19812],
+   [-57.40625, -5.75539],
+   [-53.95242, -5.75539],
+   [-53.95242, -3.19812]]
+]);
+
+Map.centerObject(geometry);
+
+var startYear = 1985;
+var endYear = 2020;
+
+var yearBand = 'classification_' + startYear;
+var date_1 = startYear + '-01-01T00:00Z';
+var date_2 = startYear + '-12-31T23:59Z';
+
+
+// ====================================
+// 2. LOAD MAPBIOMAS LAND COVER (1985)
+// ====================================
+
+var mapbiomasImage = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection6/mapbiomas_collection60_integration_v1')
+                      .select(yearBand)
+                      .clip(geometry);
+
+var visParams = {
+  bands: [yearBand],
+  min: 0,
+  max: 49,
+  palette: [/* full palette omitted here for brevity */]
+};
+
+Map.addLayer(mapbiomasImage, visParams, 'MapBiomas ' + startYear);
+
+
+// ======================================================
+// 3. CALCULATE FOREST, NON-FOREST AREAS AND PERCENTAGES
+// ======================================================
+
+function computeArea(maskedImage) {
+  return maskedImage.multiply(ee.Image.pixelArea())
+                    .reduceRegion({
+                      reducer: ee.Reducer.sum(),
+                      geometry: geometry,
+                      scale: 30,
+                      maxPixels: 1e13
+                    }).get(yearBand);
+}
+
+var forestMask = mapbiomasImage.eq(3).selfMask();     // Forest class = 3
+var nonForestMask = mapbiomasImage.neq(3).selfMask(); // All other classes
+
+var forestArea = ee.Number(computeArea(forestMask));
+var nonForestArea = ee.Number(computeArea(nonForestMask));
+var totalArea = forestArea.add(nonForestArea);
+
+print('Forest area (km²):', forestArea.divide(1e6));
+print('Non-forest area (km²):', nonForestArea.divide(1e6));
+print('Total area (km²):', totalArea.divide(1e6));
+print('Forest (%)', forestArea.divide(totalArea).multiply(100));
+print('Non-forest (%)', nonForestArea.divide(totalArea).multiply(100));
+
+
+// ===================================
+// 4. ESTIMATE FOREST PATCH PERIMETER
+// ===================================
+
+var forestVectors = forestMask.reduceToVectors({
+  geometry: geometry,
+  reducer: ee.Reducer.countEvery(),
+  scale: 300,
+  maxPixels: 1e10,
+  tileScale: 16
+});
+
+var perimeterKm = forestVectors.geometry().perimeter({maxError: 10}).divide(1000);
+print('Perimeter of forest patches (km):', perimeterKm);
+
+
+// =============================================
+// 5. EXTRACT DAILY ERA5 MAX TEMPERATURE (1985)
+// =============================================
+// Note: Extraction is limited to one year due to Earth Engine memory constraints.
+
+var tempEra5 = ee.ImageCollection("ECMWF/ERA5/DAILY")
+  .filterBounds(geometry)
+  .filterDate(date_1, date_2)
+  .select([
+    'minimum_2m_air_temperature',
+    'mean_2m_air_temperature',
+    'maximum_2m_air_temperature',
+    'total_precipitation'
+  ]);
+
+var resultEra5 = tempEra5.map(function(image){
+  var stats = image.reduceRegion({
+    reducer: ee.Reducer.mean(), 
+    geometry: forestVectors.geometry(), 
+    scale: 27830,
+    maxPixels: 2000,
+    tileScale: 4,
+    bestEffort: true
+  });
+  return ee.Feature(null, stats).copyProperties(image, ['system:time_start', 'system:time_end']);
+});
+
+Export.table.toDrive({
+  collection: resultEra5,
+  description: 'ERA5_' + startYear.toString(),
+  folder: 'ERA5',
+  fileFormat: 'CSV'
+});
+
+// Plot maximum temperature time series
+var chartTmax = ui.Chart.feature.byFeature(resultEra5, 'system:time_start', 'maximum_2m_air_temperature').setOptions({
+  interpolateNulls: true,
+  lineWidth: 1,
+  pointSize: 3,
+  title: 'Daily Maximum Temperature (ERA5, ' + startYear + ')',
+  vAxis: {title: 'Temperature [K]'},
+  hAxis: {title: 'Date', format: 'YYYY-MMM', gridlines: {count: 12}}
+});
+print(chartTmax);
+
+
+// ==============================================
+// 6. EXTRACT MONTHLY PRECIPITATION FROM GPM (2000–2020)
+// ==============================================
+
+var startYear = 2000;
+var endYear = 2020;
+
+var startDate = startYear + '-01-01';
+var endDate = endYear + '-12-31';
+
+var gpm = ee.ImageCollection("NASA/GPM_L3/IMERG_MONTHLY_V06")
+  .filterBounds(geometry)
+  .filterDate(startDate, endDate)
+  .select('precipitation');
+
+var addMonthlyPrecip = function(img) {
+  var start = ee.Date(img.get('system:time_start'));
+  var end = start.advance(1, 'month');
+  var hours = end.difference(start, 'hours');
+  return img.addBands(img.multiply(hours).rename('precip_mm_month'));
+};
+
+var gpmMonthly = gpm.map(addMonthlyPrecip);
+
+var gpmSeries = gpmMonthly.select('precip_mm_month')
+  .map(function(image) {
+    var stats = image.reduceRegion({
+      reducer: ee.Reducer.mean(),
+      geometry: geometry,
+      scale: 1000,
+      bestEffort: true,
+      maxPixels: 1e9
+    });
+    return image.set('precipitation', stats.get('precip_mm_month'));
+  });
+
+// Plot GPM precipitation
+var gpmChart = ui.Chart.image.series({
+  imageCollection: gpmMonthly.select('precip_mm_month'),
+  region: geometry,
+  reducer: ee.Reducer.mean(),
+  scale: 1000
+}).setOptions({
+  title: 'Monthly Precipitation (GPM, 2000–2020)',
+  hAxis: {title: 'Date'},
+  vAxis: {title: 'Precipitation (mm/month)'}
+});
+print(gpmChart);
+
+// Export GPM data as table
+var gpmExport = gpmSeries.map(function(image) {
+  var date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd');
+  var value = image.get('precipitation');
+  return ee.Feature(null, { 'date': date, 'precip_mm_month': value });
+});
+
+Export.table.toDrive({
+  collection: gpmExport,
+  description: 'GPM_Total_2000_2020',
+  folder: 'GPM',
+  fileFormat: 'CSV'
+});
