@@ -1,0 +1,109 @@
+// ============================================================================
+// Script: Forest Fraction Export using MapBiomas - Google Earth Engine
+// Author: Marco Aurélio de Menezes Franco
+// Purpose: 
+//   This script calculates the forest fraction (%) for a defined square region 
+//   within the Brazilian Amazon using the MapBiomas Collection 9 land use dataset.
+//   It clips the selected region, computes annual forest and non-forest areas, 
+//   and exports the percentage of forest cover over time as a CSV file.
+//
+// How to Use:
+//   1. Adjust the central coordinates (lat, lon) and square size if needed.
+//   2. Optionally switch to a predefined custom geometry by uncommenting the line:
+//      `geometry = geometry30;`
+//   3. Run the script in Google Earth Engine Code Editor.
+//   4. The output CSV will be saved to your Google Drive in the specified folder.
+//
+// Notes:
+//   - Forest cover is calculated based on MapBiomas class code 3.
+//   - Adjust `fdr` to change the Google Drive folder name.
+//
+// ============================================================================
+
+
+// Define area (previously named 'Triangulo')
+var Triangulo = geometry30;
+
+// Load MapBiomas land use/cover data
+var mpbio = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection9/mapbiomas_collection90_integration_v1');
+
+// Define export folder name
+var fdr = '50x50';
+
+// Define central coordinates (Area 24, corresponds to Area 9 in the paper)
+var lat = -10.905318803152173;
+var lon = -62.87427193107257;
+
+// Calculate square side length in degrees (~111 km per degree)
+var sideLength = 50 / 111;
+
+// Define corner coordinates of the square
+var corner1 = [lon - sideLength / 2, lat + sideLength / 2];
+var corner2 = [lon + sideLength / 2, lat + sideLength / 2];
+var corner3 = [lon + sideLength / 2, lat - sideLength / 2];
+var corner4 = [lon - sideLength / 2, lat - sideLength / 2];
+
+// Create square geometry using the corner coordinates
+var squareGeometry = ee.Geometry.Polygon([corner1, corner2, corner3, corner4]);
+
+print(squareGeometry);
+
+// Display the geometry on the map
+Map.centerObject(squareGeometry, 10);
+Map.addLayer(squareGeometry, {}, 'Square Geometry');
+
+// Set analysis geometry
+var geometry = squareGeometry;
+
+// Uncomment the line below to use a custom predefined geometry instead
+// geometry = geometry30;
+
+var bnames = mpbio.bandNames();
+
+// Calculate forested area (class code 3 = Water) for each year and store it in a list
+var listImagesForest = bnames.map(function(number){
+  var event0 = mpbio.select(ee.String(number))
+                    .eq(3)  // Water class
+                    .selfMask()
+                    .clip(geometry)
+                    .multiply(ee.Image.pixelArea())
+                    .reduceRegion(ee.Reducer.sum(), geometry, 30, null, null, false, 1e13)
+                    .get(ee.String(number));
+  return ee.Number(event0).divide(1e6);  // Convert to km²
+});
+
+// Calculate non-forested area (everything else) for each year
+var listImagesNonForest = bnames.map(function(number){
+  var event0 = mpbio.select(ee.String(number))
+                    .neq(3)  // Not Water class
+                    .selfMask()
+                    .clip(geometry)
+                    .multiply(ee.Image.pixelArea())
+                    .reduceRegion(ee.Reducer.sum(), geometry, 30, null, null, false, 1e13)
+                    .get(ee.String(number));
+  return ee.Number(event0).divide(1e6);  // Convert to km²
+});
+
+// Create a list from 0 to 35 representing each year from 1985 to 2020
+var lista = ee.List.sequence(0, 35);
+
+// Calculate percentage of forested area for each year
+var pForest = lista.map(function(image){
+  var tmpForest = listImagesForest.get(ee.Number(image));
+  var tmpNonForest = listImagesNonForest.get(ee.Number(image));
+  var calc = ee.Number(tmpForest)
+               .divide(ee.Number(tmpNonForest).add(ee.Number(tmpForest)))
+               .multiply(100);
+  var dict = { Percent: calc };
+  return ee.Feature(null, dict);
+});
+
+print(pForest);
+
+// Export results as CSV to Google Drive
+Export.table.toDrive({
+  collection: ee.FeatureCollection(pForest),
+  folder: fdr,
+  description: 'fraction_Floresta_' + fdr,
+  fileFormat: 'CSV'
+});
