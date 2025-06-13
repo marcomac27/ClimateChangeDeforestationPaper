@@ -27,7 +27,7 @@ The main Python libraries used are:
 - `sklearn` (`linear_model`, `cluster`)
 - `pylab`
 
-Everything runs on Python 3.x, tested in Jupyter Noteboo and compatible with Google Colab.
+Everything runs on Python 3.x, tested in Jupyter Notebooks and compatible with Google Colab.
 
 ---
 
